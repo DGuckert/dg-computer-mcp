@@ -1,0 +1,16 @@
+{
+  "name": "dg-computer-mcp",
+  "version": "1.0.0",
+  "description": "Windows desktop-control MCP server for trusted local MCP clients",
+  "type": "module",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.6.1"
+  }
+}

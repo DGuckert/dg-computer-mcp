@@ -1,0 +1,5 @@
+{
+  "allowShell": false,
+  "allowFileWrite": false,
+  "allowProcessKill": false
+}
