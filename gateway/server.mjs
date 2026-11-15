@@ -15,6 +15,7 @@ const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 if (!adminToken || adminToken.length < 32) throw new Error('DG_ADMIN_TOKEN must be set to a random value of at least 32 characters');
 await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
+let saveQueue = Promise.resolve();
 let db;
 try { db = JSON.parse(await fs.readFile(dbFile, 'utf8')); } catch { db = {}; }
 db.clients ||= {};
@@ -28,11 +29,15 @@ const safeEqual = (a, b) => { const x = Buffer.from(String(a)); const y = Buffer
 const randomToken = (bytes = 32) => crypto.randomBytes(bytes).toString('base64url');
 const passwordHash = (password, salt) => crypto.scryptSync(password, salt, 64).toString('hex');
 const json = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }); res.end(JSON.stringify(obj)); };
-const publicUser = u => ({ userId: u.userId, username: u.username, displayName: u.displayName, createdAt: u.createdAt, mustChangePassword: !!u.mustChangePassword });
-async function save() {
-  const tmp = dbFile + '.tmp';
-  await fs.writeFile(tmp, JSON.stringify(db, null, 2), { mode: 0o600 });
-  await fs.rename(tmp, dbFile);
+const publicUser = u => ({ userId: u.userId, username: u.username, displayName: u.displayName, createdAt: u.createdAt, mustChangePassword: !!u.mustChangePassword, disabled: !!u.disabled });
+function save() {
+  const snapshot = JSON.stringify(db, null, 2);
+  saveQueue = saveQueue.catch(() => {}).then(async () => {
+    const tmp = dbFile + '.tmp';
+    await fs.writeFile(tmp, snapshot, { mode: 0o600 });
+    await fs.rename(tmp, dbFile);
+  });
+  return saveQueue;
 }
 async function bodyJson(req, limit = 16384) {
   let body = '';
@@ -103,8 +108,10 @@ const server = http.createServer(async (req, res) => {
       const input = await bodyJson(req);
       const username = String(input.username || '').trim().toLowerCase();
       const user = Object.values(db.users).find(x => x.username === username);
-      const candidate = user ? passwordHash(String(input.password || ''), user.salt) : passwordHash(String(input.password || ''), 'fixed-invalid-user-salt');
-      if (!user || user.disabled || !safeEqual(candidate, user.passwordHash)) {
+      const suppliedPassword = typeof input.password === 'string' ? input.password : '';
+      const usablePassword = suppliedPassword.length <= 1024 ? suppliedPassword : 'invalid-overlong-password';
+      const candidate = user ? passwordHash(usablePassword, user.salt) : passwordHash(usablePassword, 'fixed-invalid-user-salt');
+      if (!user || user.disabled || suppliedPassword.length > 1024 || !safeEqual(candidate, user.passwordHash)) {
         attempt.count++; loginAttempts.set(ip, attempt);
         return json(res, 401, { error: 'invalid_credentials' });
       }
@@ -130,6 +137,22 @@ const server = http.createServer(async (req, res) => {
         const initialPassword = randomToken(18); const salt = randomToken(16); const userId = 'dgu_' + crypto.randomBytes(12).toString('hex');
         const user = { userId, username, displayName: String(input.displayName || username).slice(0, 80), salt, passwordHash: passwordHash(initialPassword, salt), createdAt: new Date().toISOString(), mustChangePassword: true };
         db.users[userId] = user; await save(); return json(res, 201, { user: publicUser(user), initialPassword, note: 'Password is shown once. The user must change it at first sign-in.' });
+      }
+      const userAction = u.pathname.match(/^\/v1\/admin\/users\/([A-Za-z0-9_.-]+)\/(reset-password|disable)$/);
+      if (req.method === 'POST' && userAction) {
+        const user = Object.values(db.users).find(x => x.username === userAction[1].toLowerCase());
+        if (!user) return json(res, 404, { error: 'user_not_found' });
+        if (userAction[2] === 'reset-password') {
+          if (user.disabled) return json(res, 403, { error: 'account_disabled' });
+          const initialPassword = randomToken(18); const salt = randomToken(16);
+          user.salt = salt; user.passwordHash = passwordHash(initialPassword, salt); user.mustChangePassword = true;
+          for (const [k, session] of Object.entries(db.sessions)) if (session.userId === user.userId) delete db.sessions[k];
+          await save(); return json(res, 200, { username: user.username, initialPassword, note: 'Password is shown once. Existing sessions were revoked; the user must change it at next sign-in.' });
+        }
+        user.disabled = true;
+        for (const c of Object.values(db.clients)) if (c.ownerUserId === user.userId) { c.revoked = true; online.get(c.clientId)?.close(4003, 'account_disabled'); online.delete(c.clientId); }
+        for (const [k, session] of Object.entries(db.sessions)) if (session.userId === user.userId) delete db.sessions[k];
+        await save(); return json(res, 200, { ok: true, username: user.username, disabled: true, devicesRevoked: true });
       }
       if (req.method === 'GET' && u.pathname === '/v1/admin/users') return json(res, 200, { users: Object.values(db.users).map(publicUser) });
       if (req.method === 'GET' && u.pathname === '/v1/admin/clients') return json(res, 200, { clients: Object.values(db.clients).map(clientSummary) });
