@@ -506,3 +506,4 @@ server.registerTool(
   },
 );
 await server.connect(new StdioServerTransport());
+
