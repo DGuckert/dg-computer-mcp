@@ -1,60 +1,56 @@
 # DG Computer MCP
 
-A Model Context Protocol (MCP) server that exposes Windows desktop-control tools to a trusted MCP client over standard input/output (stdio).
+Generic Windows desktop-control MCP server with per-installation authenticated gateway registration.
 
-## Features
+## Components
 
-- Capture screenshots and inspect the active window
-- Move, click and scroll the mouse; type text and send key presses
-- List and focus application windows
-- Open applications and URLs
-- Inspect processes and optionally terminate them
-- Read and write UTF-8 files
-- Run PowerShell and Command Prompt commands when explicitly enabled
-- Read and set the clipboard
+- `index.mjs`: local MCP server. Desktop actions execute on the Windows machine.
+- `client/agent.mjs`: outbound authenticated WebSocket client. Reports online status and heartbeats to the gateway.
+- `gateway/server.mjs`: central registration, authentication, presence, and revocation service.
+- `scripts/admin.mjs`: administrator CLI for provisioning and revoking client credentials.
+- `SKILL.md`: generic agent skill and installation instructions.
 
-## Requirements
+The gateway does not proxy desktop-control traffic. Screenshots, keystrokes, files, clipboard data, and shell commands remain local to the Windows client.
 
-- Windows 10 or later
-- Node.js 20 or later
-- An MCP-compatible client
+## Gateway deployment
 
-## Setup
+Node.js 20+ is required.
 
-1. Clone this repository.
-2. Install dependencies with `npm install`.
-3. Copy `config.example.json` to `config.json` if you want to change the defaults.
-4. Configure your MCP client to launch `node /absolute/path/to/index.mjs` using the stdio transport.
-
-Example MCP client configuration (adjust the path for your machine):
-
-```json
-{
-  "mcpServers": {
-    "dg-computer": {
-      "command": "node",
-      "args": ["C:/path/to/DGComputerMCP/index.mjs"]
-    }
-  }
-}
+```bash
+cd gateway
+DG_ADMIN_TOKEN="$(openssl rand -hex 32)" DG_PORT=8422 node server.mjs
 ```
 
-## Security
+For production, store `DG_ADMIN_TOKEN` in a root-readable environment file and run the gateway under systemd behind a TLS reverse proxy or Cloudflare Tunnel. The gateway binds to `127.0.0.1` by default.
 
-**This server can control your Windows session. Only connect it to MCP clients and models you trust.** Mouse and keyboard tools can interact with open applications, and the file, clipboard, process, and command tools can access or change data on the host.
+Set `DG_ADMIN_TOKEN` when using the admin CLI:
 
-For safety, shell execution, file writing, and process termination are disabled by default. To enable an individual capability, set its corresponding value to `true` in a local `config.json`. Do not commit that local file. For example:
-
-```json
-{
-  "allowShell": true,
-  "allowFileWrite": false,
-  "allowProcessKill": false
-}
+```bash
+export DG_ADMIN_TOKEN='the-same-admin-token'
+node scripts/admin.mjs create "Customer or installation label"
+node scripts/admin.mjs list
+node scripts/admin.mjs revoke dgc_CLIENTID
 ```
 
-This server uses stdio and does not implement its own network listener or authentication layer. Do not expose it through an unauthenticated network bridge.
+Creation returns a Client ID and a one-time Client Secret. Deliver these to the client securely. Secrets are stored only as SHA-256 hashes on the gateway.
 
-## License
+## Windows client installation
 
-No license has been specified yet. All rights are reserved by default.
+Use PowerShell and provide the client credentials when prompted:
+
+```powershell
+curl.exe -fsSL https://computer.danielslefhosted.xyz/install.ps1 | powershell.exe -NoProfile -ExecutionPolicy Bypass -Command -
+```
+
+The installer downloads the repository, installs dependencies, writes local client credentials, creates an MCP configuration snippet, and registers a per-user scheduled task for the gateway connection.
+
+## Local development
+
+```bash
+npm ci
+npm start
+```
+
+## Safety defaults
+
+Shell execution, file writes, and process termination are disabled by default. The local MCP server uses stdio. Never expose it directly to the internet.
