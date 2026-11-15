@@ -33,7 +33,7 @@ node scripts/admin.mjs assign dgc_CLIENTID owner
 node scripts/admin.mjs revoke dgc_CLIENTID
 ```
 
-`invite` returns a one-time code valid for seven days. `create-user` is for bootstrapping or administrator-created accounts and returns a temporary password shown once; the user must change it after signing in. `assign` is for migrating an existing device to an account. Customer device creation is done from the account page.
+`invite` returns a one-time code valid for seven days. `create-user` is for bootstrapping or administrator-created accounts and returns a temporary password shown once; the user must change it after signing in. `assign` is for migrating an existing device to an account. `reset-password` revokes the user's sessions and forces a password change. `disable-user` disables login and revokes all of that user's devices. Customer device creation is done from the account page.
 
 ## Gateway deployment
 
