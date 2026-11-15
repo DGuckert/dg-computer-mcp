@@ -1,6 +1,7 @@
 node_modules/
 config.json
+client.json
+gateway/data/
 .env
 *.log
-.DS_Store
-Thumbs.db
+gateway/releases/
