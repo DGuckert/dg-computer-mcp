@@ -16,7 +16,7 @@ while(!stopping){
     await new Promise((resolve,reject)=>{
       const ws=new WebSocket(cfg.serverUrl,{handshakeTimeout:10000});activeSocket=ws;let authed=false,heartbeat;
       const done=()=>{clearInterval(heartbeat);resolve();};
-      ws.on('open',()=>ws.send(JSON.stringify({type:'auth',clientId:cfg.clientId,clientSecret:cfg.clientSecret,hostname:os.hostname(),platform:`${os.platform()} ${os.release()}`,version:'2.1.0'})));
+      ws.on('open',()=>ws.send(JSON.stringify({type:'auth',clientId:cfg.clientId,clientSecret:cfg.clientSecret,hostname:os.hostname(),platform:`${os.platform()} ${os.release()}`,version:'2.2.0'})));
       ws.on('message',raw=>{let m;try{m=JSON.parse(raw.toString())}catch{return;}
         if(m.type==='authenticated'){authed=true;delay=1000;console.error(`[DG Computer] authenticated with gateway as ${m.clientId}`);heartbeat=setInterval(()=>{if(ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'heartbeat'}));},(m.heartbeatSeconds||30)*1000);}
       });
