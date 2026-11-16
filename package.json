@@ -1,16 +1,19 @@
 {
   "name": "dg-computer-mcp",
-  "version": "1.0.0",
-  "description": "Windows desktop-control MCP server for trusted local MCP clients",
+  "version": "2.2.0",
+  "description": "Generic Windows desktop-control MCP client with authenticated central registration",
   "type": "module",
   "scripts": {
-    "start": "node index.mjs"
+    "start": "node index.mjs",
+    "server": "node gateway/server.mjs",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "ws": "^8.18.3",
     "zod": "^4.6.1"
   }
 }
