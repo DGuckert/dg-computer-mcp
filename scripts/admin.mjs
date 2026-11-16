@@ -7,8 +7,8 @@ async function req(path, method = 'GET', body) {
   const d = await r.json(); if (!r.ok) throw Error(JSON.stringify(d)); return d;
 }
 try {
-  if (cmd === 'invite') console.log(JSON.stringify(await req('/v1/admin/invitations', 'POST', { label: arg1 || 'Customer' }), null, 2));
-  else if (cmd === 'create-user' && arg1) console.log(JSON.stringify(await req('/v1/admin/users', 'POST', { username: arg1, displayName: arg2 || arg1 }), null, 2));
+  if (cmd === 'create-user' && arg1) console.log(JSON.stringify(await req('/v1/admin/users', 'POST', { username: arg1, displayName: arg2 || arg1 }), null, 2));
+  else if (cmd === 'create-device' && arg1 && arg2) console.log(JSON.stringify(await req('/v1/admin/clients', 'POST', { username: arg1, label: arg2 }), null, 2));
   else if (cmd === 'reset-password' && arg1) console.log(JSON.stringify(await req(`/v1/admin/users/${encodeURIComponent(arg1)}/reset-password`, 'POST', {}), null, 2));
   else if (cmd === 'disable-user' && arg1) console.log(JSON.stringify(await req(`/v1/admin/users/${encodeURIComponent(arg1)}/disable`, 'POST', {}), null, 2));
   else if (cmd === 'users') console.log(JSON.stringify(await req('/v1/admin/users'), null, 2));
@@ -17,8 +17,8 @@ try {
   else if (cmd === 'revoke' && arg1) console.log(JSON.stringify(await req(`/v1/admin/clients/${encodeURIComponent(arg1)}/revoke`, 'POST', {}), null, 2));
   else {
     console.log('Usage:');
-    console.log('  node scripts/admin.mjs invite <label>');
     console.log('  node scripts/admin.mjs create-user <username> [displayName]');
+    console.log('  node scripts/admin.mjs create-device <username> <deviceLabel>');
     console.log('  node scripts/admin.mjs reset-password <username>');
     console.log('  node scripts/admin.mjs disable-user <username>');
     console.log('  node scripts/admin.mjs users');
