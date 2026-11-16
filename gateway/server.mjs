@@ -12,7 +12,6 @@ const dbFile = path.join(dataDir, 'clients.json');
 const port = Number(process.env.DG_PORT || 8422);
 const adminToken = process.env.DG_ADMIN_TOKEN;
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
-const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 if (!adminToken || adminToken.length < 32) throw new Error('DG_ADMIN_TOKEN must be set to a random value of at least 32 characters');
 await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
 let saveQueue = Promise.resolve();
@@ -20,7 +19,6 @@ let db;
 try { db = JSON.parse(await fs.readFile(dbFile, 'utf8')); } catch { db = {}; }
 db.clients ||= {};
 db.users ||= {};
-db.invitations ||= {};
 db.sessions ||= {};
 const online = new Map();
 const loginAttempts = new Map();
@@ -77,28 +75,13 @@ function validPassword(p) { return typeof p === 'string' && p.length >= 12 && p.
 const server = http.createServer(async (req, res) => {
   try {
     const u = new URL(req.url, 'http://localhost');
-    if (req.method === 'GET' && u.pathname === '/health') return json(res, 200, { ok: true, service: 'dg-computer-gateway', version: '2.1.0', online: online.size });
+    if (req.method === 'GET' && u.pathname === '/health') return json(res, 200, { ok: true, service: 'dg-computer-gateway', version: '2.2.0', online: online.size });
     if (req.method === 'GET' && u.pathname === '/install.ps1') { res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }); return res.end(await fs.readFile(path.join(projectRoot, 'install.ps1'))); }
     if (req.method === 'GET' && u.pathname === '/SKILL.md') { res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }); return res.end(await fs.readFile(path.join(projectRoot, 'SKILL.md'))); }
     if (req.method === 'GET' && u.pathname === '/source.zip') { res.writeHead(200, { 'content-type': 'application/zip', 'cache-control': 'no-store', 'content-disposition': 'attachment; filename=dg-computer-mcp.zip', 'x-content-type-options': 'nosniff' }); return res.end(await fs.readFile(path.join(root, 'releases', 'source.zip'))); }
-    if (req.method === 'GET' && (u.pathname === '/' || u.pathname === '/account')) { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" }); return res.end(await fs.readFile(path.join(projectRoot, 'gateway', 'account.html'))); }
+    if (req.method === 'GET' && u.pathname === '/') return json(res, 200, { name: 'DG Computer Gateway', version: '2.2.0', health: '/health', installer: '/install.ps1', skill: '/SKILL.md' });
 
-    // Account creation is invitation-only. There is intentionally no public open signup.
-    if (req.method === 'POST' && u.pathname === '/v1/auth/register') {
-      const input = await bodyJson(req);
-      const username = String(input.username || '').trim().toLowerCase();
-      if (!/^[a-z0-9][a-z0-9_.-]{2,31}$/.test(username)) return json(res, 400, { error: 'username must be 3-32 characters: letters, numbers, dot, dash or underscore' });
-      if (!validPassword(input.password)) return json(res, 400, { error: 'password must be 12-1024 characters' });
-      const invitation = db.invitations[hash(String(input.inviteCode || ''))];
-      if (!invitation || invitation.usedAt || Date.parse(invitation.expiresAt) <= Date.now()) return json(res, 403, { error: 'invalid_or_expired_invitation' });
-      if (Object.values(db.users).some(x => x.username === username)) return json(res, 409, { error: 'username_unavailable' });
-      const userId = 'dgu_' + crypto.randomBytes(12).toString('hex');
-      const salt = randomToken(16);
-      const user = { userId, username, displayName: String(input.displayName || invitation.label || username).slice(0, 80), salt, passwordHash: passwordHash(input.password, salt), createdAt: new Date().toISOString(), mustChangePassword: false };
-      db.users[userId] = user; invitation.usedAt = new Date().toISOString(); invitation.usedBy = userId;
-      const token = createSession(user); await save();
-      return json(res, 201, { token, expiresInSeconds: SESSION_TTL_MS / 1000, user: publicUser(user) });
-    }
+    // Customer accounts are provisioned by the administrator. No public signup or portal is exposed.
     if (req.method === 'POST' && u.pathname === '/v1/auth/login') {
       const forwardedIp = String(req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0].trim();
       const ip = forwardedIp || req.socket.remoteAddress || 'unknown';
@@ -123,20 +106,14 @@ const server = http.createServer(async (req, res) => {
     // Admin-only management API. Never expose the admin token to customer browsers.
     if (u.pathname.startsWith('/v1/admin/')) {
       if (!adminAuth(req)) return json(res, 401, { error: 'admin_unauthorized' });
-      if (req.method === 'POST' && u.pathname === '/v1/admin/invitations') {
-        const input = await bodyJson(req);
-        const code = randomToken(24);
-        db.invitations[hash(code)] = { label: String(input.label || 'Customer').slice(0, 80), createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + INVITE_TTL_MS).toISOString(), usedAt: null };
-        await save(); return json(res, 201, { inviteCode: code, expiresAt: db.invitations[hash(code)].expiresAt, note: 'Send this one-time code privately. It is shown only once.' });
-      }
       if (req.method === 'POST' && u.pathname === '/v1/admin/users') {
         const input = await bodyJson(req);
         const username = String(input.username || '').trim().toLowerCase();
         if (!/^[a-z0-9][a-z0-9_.-]{2,31}$/.test(username)) return json(res, 400, { error: 'invalid_username' });
         if (Object.values(db.users).some(x => x.username === username)) return json(res, 409, { error: 'username_unavailable' });
         const initialPassword = randomToken(18); const salt = randomToken(16); const userId = 'dgu_' + crypto.randomBytes(12).toString('hex');
-        const user = { userId, username, displayName: String(input.displayName || username).slice(0, 80), salt, passwordHash: passwordHash(initialPassword, salt), createdAt: new Date().toISOString(), mustChangePassword: true };
-        db.users[userId] = user; await save(); return json(res, 201, { user: publicUser(user), initialPassword, note: 'Password is shown once. The user must change it at first sign-in.' });
+        const user = { userId, username, displayName: String(input.displayName || username).slice(0, 80), salt, passwordHash: passwordHash(initialPassword, salt), createdAt: new Date().toISOString(), mustChangePassword: false };
+        db.users[userId] = user; await save(); return json(res, 201, { user: publicUser(user), initialPassword, note: 'Save and send the generated account password privately. It is shown only once.' });
       }
       const userAction = u.pathname.match(/^\/v1\/admin\/users\/([A-Za-z0-9_.-]+)\/(reset-password|disable)$/);
       if (req.method === 'POST' && userAction) {
@@ -145,7 +122,7 @@ const server = http.createServer(async (req, res) => {
         if (userAction[2] === 'reset-password') {
           if (user.disabled) return json(res, 403, { error: 'account_disabled' });
           const initialPassword = randomToken(18); const salt = randomToken(16);
-          user.salt = salt; user.passwordHash = passwordHash(initialPassword, salt); user.mustChangePassword = true;
+          user.salt = salt; user.passwordHash = passwordHash(initialPassword, salt); user.mustChangePassword = false;
           for (const [k, session] of Object.entries(db.sessions)) if (session.userId === user.userId) delete db.sessions[k];
           await save(); return json(res, 200, { username: user.username, initialPassword, note: 'Password is shown once. Existing sessions were revoked; the user must change it at next sign-in.' });
         }
@@ -155,6 +132,13 @@ const server = http.createServer(async (req, res) => {
         await save(); return json(res, 200, { ok: true, username: user.username, disabled: true, devicesRevoked: true });
       }
       if (req.method === 'GET' && u.pathname === '/v1/admin/users') return json(res, 200, { users: Object.values(db.users).map(publicUser) });
+      if (req.method === 'POST' && u.pathname === '/v1/admin/clients') {
+        const input = await bodyJson(req);
+        const owner = Object.values(db.users).find(x => x.username === String(input.username || '').trim().toLowerCase());
+        if (!owner || owner.disabled) return json(res, 404, { error: 'active_user_not_found' });
+        const created = createClient(owner.userId, input.label);
+        await save(); return json(res, 201, { ...created, ownerUsername: owner.username });
+      }
       if (req.method === 'GET' && u.pathname === '/v1/admin/clients') return json(res, 200, { clients: Object.values(db.clients).map(clientSummary) });
       const assign = u.pathname.match(/^\/v1\/admin\/clients\/([A-Za-z0-9_-]+)\/assign$/);
       if (req.method === 'POST' && assign) {
