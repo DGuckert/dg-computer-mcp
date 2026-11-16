@@ -1,6 +1,6 @@
 {
   "name": "dg-computer-mcp",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Generic Windows desktop-control MCP client with authenticated central registration",
   "type": "module",
   "scripts": {
